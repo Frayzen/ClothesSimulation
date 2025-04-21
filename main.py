@@ -51,17 +51,14 @@ def disp_tris():
             draw.polygon(screen, BLUE, v, 2)
 
 
-while True:
+def handle_events():
     for event in pygame.event.get():
-        if event.type==QUIT:
+        if event.type == QUIT:
             pygame.quit()
             sys.exit()
-    disp_tris()
-
     mpos = array(mouse.get_pos())
     curlen = inf
     curids = None
-    curpos = None
     for i in range(nb_x):
         for j in range(nb_y):
             pos = pts[j, i]
@@ -75,112 +72,64 @@ while True:
 
     if mouse.get_pressed()[0]:
         pts[curids] = mpos
-        # weights[curids] = 0
+    if mouse.get_pressed()[2]:
+        pts[curids] = mpos
+        weights[curids] = 0
+        vels[curids] = array([0,0])
 
-    dt = clock.tick(FPS) / 150
-    # dt = 0.1
+def apply_gravity(vels, weights, dt):
+    vels[:, :, 1] += dt * g * weights
+    return vels
 
-    # Update pos
-    oldpos = pts.copy()
-    for i in range(nb_x):
-        for j in range(nb_y):
-            vels[j, i][1] += dt * g * weights[j, i]
-            pts[j,i] = pts[j,i] + dt * vels[j,i]
+def update_positions(pts, vels, dt):
+    return pts + dt * vels
 
-
-    # For all squares
-    # for i in range(nb_x - 1):
-    #     for j in range(nb_y - 1):
-    #         v = pts[j:j+2, i:i+2].flatten().reshape((4,2))
-    #         tmp = v[2].copy()
-    #         v[2] = v[3]
-    #         v[3] = tmp
-
-    #         w = weights[j:j+2, i:i+2].flatten().reshape(4)
-    #         w[2], w[3] = w[3], w[2]
-
-
-    #         """
-    #         here:
-    #         0 is pts[j,i]
-    #         1 is pts[j,i+1]
-    #         2 is pts[j+1,i+1]
-    #         3 is pts[j+1,i]
-
-    # e1      e2
-    #   0____1       
-    #   |\  /|       
-    #   | \/ |       
-    #   | /\ |       
-    #   3/__\2       
-
-    #         """
-
-    #         e1 = (v[0] - v[2])
-    #         e2 = (v[1] - v[3])
-            
-    #         curarea = norm(e1) * norm(e2) / 2
-
-    #         grad_e1 = norm(e2) / 2 # how much of the area increases when e1 increases
-    #         grad_e2 = norm(e1) / 2 # how much of the area increases when e2 increases
-
-    #         ne1 = grad_e1 * e1/norm(e1) # dir of the gradient of 0 and 2 (inverse)
-    #         ne2 = grad_e2 * e2/norm(e2) # dir of the gradient of 1 and 3 (inverse)
-
-    #         darea = (curarea - area)
-
-    #         alpha = 1 / k
-    #         lmbda = -darea / ((w[0] + w[2]) * grad_e1 ** 2 + (w[1] + w[3]) * norm(e2) ** 2 + alpha / (dt ** 2))
-    #         lmbda *= k
-
-    #         pts[j,i] += lmbda * w[0] * ne1
-    #         pts[j,i+1] += lmbda * w[1] * ne2
-    #         pts[j+1,i+1] += lmbda * w[2] * -ne1
-    #         pts[j+1,i] += lmbda * w[3] * -ne2
-
-    # ensure edges are fixed length
-    # verticals
-    for i in range(nb_x - 1):
-        for j in range(nb_y):
-            p0 = pts[j,i]
-            p1 = pts[j,i + 1]
-            w0 = weights[j,i]
-            w1 = weights[j,i + 1]
-            e = p0 - p1
-            curlen = norm(e)
-            grad = 1
-            ne = grad * e / norm(e)
-            dlen = (curlen - side)
-            alpha = 1 / k
-            lmbda = -dlen / (w0 + w1 + alpha / (dt ** 2))
-            lmbda *= k * 5
-            pts[j,i] += lmbda * w0 * ne
-            pts[j,i + 1] -= lmbda * w1 * ne
-    # horizontal
+def apply_edge_constraints(pts, weights, dt, k):
+    alpha = 1 / k
+    inv_dt_sq = alpha / (dt ** 2)
+    
+    # Helper function for constraint application
+    def apply_constraint(p0, p1, w0, w1):
+        e = p0 - p1
+        curlen = np.linalg.norm(e)
+        if curlen == 0:
+            return p0, p1  # Avoid division by zero
+        ne = e / curlen
+        dlen = (curlen - side)
+        lmbda = -dlen / (w0 + w1 + inv_dt_sq)
+        return lmbda * w0 * ne, -lmbda * w1 * ne
+    
+    # Horizontal constraints
     for i in range(nb_x):
         for j in range(nb_y - 1):
-            p0 = pts[j,i]
-            p1 = pts[j+1,i]
-            w0 = weights[j,i]
-            w1 = weights[j+1,i]
-            e = p0 - p1
-            curlen = norm(e)
-            grad = 1
-            ne = grad * e / norm(e)
-            dlen = (curlen - side)
-            alpha = 1 / k
-            lmbda = -dlen / (w0 + w1 + alpha / (dt ** 2))
-            lmbda *= k * 5
-            pts[j,i] += lmbda * w0 * ne
-            pts[j+1,i] -= lmbda * w1 * ne
-
-
-    for i in range(nb_x):
+            delta_p0, delta_p1 = apply_constraint(
+                pts[j, i], pts[j+1, i], weights[j, i], weights[j+1, i])
+            pts[j, i] += delta_p0
+            pts[j+1, i] += delta_p1
+    
+    # Vertical constraints
+    for i in range(nb_x - 1):
         for j in range(nb_y):
-            vels[j,i] = (pts[j,i] - oldpos[j,i]) / dt
+            delta_p0, delta_p1 = apply_constraint(
+                pts[j, i], pts[j, i+1], weights[j, i], weights[j, i+1])
+            pts[j, i] += delta_p0
+            pts[j, i+1] += delta_p1
+    
+    return pts
 
+while True:
+    handle_events()
+    
+    # Physics update
+    oldpos = pts.copy()
+    dt = clock.tick(FPS) / 250
+    vels = apply_gravity(vels, weights, dt)
+    pts = update_positions(pts, vels, dt)
+    pts = apply_edge_constraints(pts, weights, dt, k)
+    vels = damping * (pts - oldpos) / dt
+    
+    # Rendering
+    screen.fill(WHITE)
     disp_tris()
-    # input()
     display.update()
-
 

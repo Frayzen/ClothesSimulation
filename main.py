@@ -72,6 +72,7 @@ def handle_events():
 
     if mouse.get_pressed()[0]:
         pts[curids] = mpos
+        vels[curids] = array([0,0])
     if mouse.get_pressed()[2]:
         pts[curids] = mpos
         weights[curids] = 0
@@ -89,13 +90,13 @@ def apply_edge_constraints(pts, weights, dt, k):
     inv_dt_sq = alpha / (dt ** 2)
     
     # Helper function for constraint application
-    def apply_constraint(p0, p1, w0, w1):
+    def apply_constraint(p0, p1, w0, w1, l = side):
         e = p0 - p1
         curlen = np.linalg.norm(e)
         if curlen == 0:
             return p0, p1  # Avoid division by zero
         ne = e / curlen
-        dlen = (curlen - side)
+        dlen = (curlen - l)
         lmbda = -dlen / (w0 + w1 + inv_dt_sq)
         return lmbda * w0 * ne, -lmbda * w1 * ne
     
@@ -114,7 +115,7 @@ def apply_edge_constraints(pts, weights, dt, k):
                 pts[j, i], pts[j, i+1], weights[j, i], weights[j, i+1])
             pts[j, i] += delta_p0
             pts[j, i+1] += delta_p1
-    
+
     return pts
 
 while True:
@@ -122,12 +123,15 @@ while True:
     
     # Physics update
     oldpos = pts.copy()
-    dt = clock.tick(FPS) / 250
-    vels = apply_gravity(vels, weights, dt)
-    pts = update_positions(pts, vels, dt)
-    pts = apply_edge_constraints(pts, weights, dt, k)
-    vels = damping * (pts - oldpos) / dt
+    global_dt = clock.tick(FPS) / 250
+    dt = global_dt / substep
+    vels = apply_gravity(vels, weights, global_dt)
+    for _ in range(substep):
+        pts = update_positions(pts, vels, dt)
+        pts = apply_edge_constraints(pts, weights, dt, k)
     
+    vels = damping * (pts - oldpos) / global_dt
+
     # Rendering
     screen.fill(WHITE)
     disp_tris()
